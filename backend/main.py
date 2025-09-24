@@ -92,38 +92,49 @@ async def process_and_answer(document_url: str, questions: list[str]) -> list[st
                 raise HTTPException(status_code=500, detail="Failed to retrieve or process document content.")
             
             chunks = split_text_into_chunks(document_text)
+            if not chunks:
+                raise HTTPException(status_code=500, detail="Failed to split document into chunks.")
             embeddings = generate_embeddings(chunks)
+            
+            if not embeddings:
+                raise HTTPException(status_code=500, detail="Failed to generate embeddings for document chunks.")
+            
             index_chunks_in_pinecone(chunks, embeddings, index_name, namespace=namespace)
             print("--- Document Processing Complete ---")
         else:
-            print(f"Document already processed in namespace '{namespace}'.")
+            print(f"Document already processed in namespace '{namespace}'. Skipping to question answering.")
 
         answers = []
-        for question in questions:
-            print(f"Processing question: '{question}'")
-            question_embedding_response = genai.embed_content(
-                model="models/embedding-001",
-                content=question,
-                task_type="retrieval_query"
-            )
-            question_embedding = question_embedding_response['embedding']
-            
-            search_results = index.query(
-                vector=question_embedding,
-                top_k=5,
-                include_metadata=True,
-                namespace=namespace
-            )
-            context_chunks = [match.metadata['text'] for match in search_results.matches]
-            context = "\n\n".join(context_chunks)
-            answer = generate_answer_with_gemini(question, context)
-            answers.append(answer)
+        if questions:
+            for question in questions:
+                print(f"Received question for processing: '{question}'")
+                question_embedding_response = genai.embed_content(
+                    model="models/embedding-001",
+                    content=question,
+                    task_type="retrieval_query"
+                )
+                question_embedding = question_embedding_response['embedding']
+                
+                search_results = index.query(
+                    vector=question_embedding,
+                    top_k=5,
+                    include_metadata=True,
+                    namespace=namespace
+                )
+                
+                context_chunks = [match.metadata['text'] for match in search_results.matches]
+                context = "\n\n".join(context_chunks)
+                
+                answer = generate_answer_with_gemini(question, context)
+                answers.append(answer)
+        else:
+            print("No questions received, returning empty answer list.")
 
         return answers
 
     except Exception as e:
         print(f"An error occurred during processing: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"An internal server error occurred: {str(e)}")
 
 # --- URL endpoint only ---
 @app.post("/hackrx/run", tags=["URL Endpoint"])
@@ -135,4 +146,8 @@ async def hackrx_run(data: DocumentData, authorization: str = Header(None)):
     if token != HACKATHON_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key.")
     
-    return {"answers": await process_and_answer(data.documents, data.questions)}
+    document_url = data.documents
+    questions = data.questions
+    
+    answers = await process_and_answer(document_url, questions)
+    return {"answers": answers}
