@@ -144,7 +144,7 @@ What are the benefits provided by this policy ?
 What are the terms used in this policy ?
 
 **Sample Output (screenshot):**
-![RAG Chatbot Demo](assets/demo_screenshot.png)
+![RAG Chatbot Demo](assets/demo screenshot.jpg)
 
 
 
