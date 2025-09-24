@@ -1,0 +1,138 @@
+import os
+import time
+import hashlib
+import json
+from fastapi import FastAPI, HTTPException, Header
+from pydantic import BaseModel
+from dotenv import load_dotenv
+import google.generativeai as genai
+from pinecone import Pinecone
+from fastapi.middleware.cors import CORSMiddleware
+
+from .data_processor import (
+    get_document_text,
+    split_text_into_chunks,
+    generate_embeddings,
+    index_chunks_in_pinecone,
+)
+
+# --- Load environment variables ---
+load_dotenv()
+HACKATHON_API_KEY = os.environ.get("HACKATHON_API_KEY")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
+
+# --- Initialize clients ---
+genai.configure(api_key=GOOGLE_API_KEY)
+pc = Pinecone(api_key=PINECONE_API_KEY)
+
+class DocumentData(BaseModel):
+    documents: str
+    questions: list[str]
+
+app = FastAPI(
+    title="Insurance DocAI: Your Insurance Policy Expert",
+    description="RAG ChatBot for processing insurance policy documents and answering questions using AI.",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+def create_doc_id_from_url(url: str) -> str:
+    return hashlib.sha256(url.encode('utf-8')).hexdigest()
+
+def generate_answer_with_gemini(question: str, context: str) -> str:
+    print(f"Generating answer for question: '{question}' with Gemini Pro...")
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    prompt = f"""
+    You are an expert insurance policy analyst.
+    Based ONLY on the context provided below from an insurance document, answer the user's question.
+    Do not use any external knowledge or make assumptions.
+    If the answer cannot be found in the provided context, state that clearly.
+
+    CONTEXT:
+    ---
+    {context}
+    ---
+
+    QUESTION: {question}
+
+    ANSWER:
+    """
+    try:
+        response = model.generate_content(prompt)
+        if response.parts:
+            return response.text.strip()
+        else:
+            return "The model's response was empty. This may be due to safety filters."
+    except Exception as e:
+        print("Gemini error:", e)
+        return "An error occurred while generating the answer with Gemini Pro."
+
+async def process_and_answer(document_url: str, questions: list[str]) -> list[str]:
+    index_name = "hackrx-policy-index"
+    namespace = create_doc_id_from_url(document_url)
+
+    try:
+        index = pc.Index(index_name)
+        stats = index.describe_index_stats()
+        vector_count = stats.get('namespaces', {}).get(namespace, {}).get('vector_count', 0)
+        is_processed = vector_count > 0
+
+        if not is_processed:
+            print(f"Namespace '{namespace}' not processed. Starting processing...")
+            document_text = get_document_text(document_url)
+            if not document_text:
+                raise HTTPException(status_code=500, detail="Failed to retrieve or process document content.")
+            
+            chunks = split_text_into_chunks(document_text)
+            embeddings = generate_embeddings(chunks)
+            index_chunks_in_pinecone(chunks, embeddings, index_name, namespace=namespace)
+            print("--- Document Processing Complete ---")
+        else:
+            print(f"Document already processed in namespace '{namespace}'.")
+
+        answers = []
+        for question in questions:
+            print(f"Processing question: '{question}'")
+            question_embedding_response = genai.embed_content(
+                model="models/embedding-001",
+                content=question,
+                task_type="retrieval_query"
+            )
+            question_embedding = question_embedding_response['embedding']
+            
+            search_results = index.query(
+                vector=question_embedding,
+                top_k=5,
+                include_metadata=True,
+                namespace=namespace
+            )
+            context_chunks = [match.metadata['text'] for match in search_results.matches]
+            context = "\n\n".join(context_chunks)
+            answer = generate_answer_with_gemini(question, context)
+            answers.append(answer)
+
+        return answers
+
+    except Exception as e:
+        print(f"An error occurred during processing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- URL endpoint only ---
+@app.post("/hackrx/run", tags=["URL Endpoint"])
+async def hackrx_run(data: DocumentData, authorization: str = Header(None)):
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization header missing or invalid.")
+    
+    token = authorization.split(" ")[1]
+    if token != HACKATHON_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key.")
+    
+    return {"answers": await process_and_answer(data.documents, data.questions)}

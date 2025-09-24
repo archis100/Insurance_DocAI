@@ -1,0 +1,29 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+
+# Virtual Environments
+# Never commit your virtual environment folders
+venv/
+.venv/
+env/
+venv_rag/
+
+# Environment Variables
+# IMPORTANT: Never commit files containing secrets like API keys!
+.env
+*/.env
+
+# IDE and Editor Directories
+# For VS Code, PyCharm, etc.
+.vscode/
+.idea/
+
+# Operating System Files
+# For macOS
+.DS_Store
+# For Windows
+Thumbs.db
