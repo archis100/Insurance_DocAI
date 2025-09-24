@@ -134,5 +134,19 @@ This project is configured for deployment on **Hugging Face Spaces** using **Fas
   - User interface defined in `streamlit_app.py`.  
   - Sends requests directly to the FastAPI backend in the same Space.  
 
+## 🧪 Example Usage
+
+**Sample Policy Document:**  
+[RBC Insurance — Term 100 Policy (PDF)](https://www.rbcinsurance.com/samplepolicy/pdf/t100-policy.pdf)
+
+**Sample Question:**
+What are the benefits provided by this policy ?
+What are the terms used in this policy ?
+
+**Sample Output (screenshot):**
+![RAG Chatbot Demo](assets/demo_screenshot.png)
+
+
+
 
 
